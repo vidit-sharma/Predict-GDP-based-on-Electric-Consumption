@@ -1,0 +1,288 @@
+---
+title: "Team Insight"
+author: "Vidit, Tejus, Gilmo, Andrew"
+date: "23/09/2021"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Prediction of Economic Growth from Electrical Power Consumption
+
+Nowadays we have become energy driven a lot. Everything from our basic household equipment to the hugh factories to our day to day transport require energy. And the amount of electric consumption could relate to how developed the state is. So it wouldn't be wrong to say that there is a relation between electric consumption and the GDP of a state.
+
+If you analyse consumption in a specific area, you can find out which area has the greatest potential and through this, we will be able to open a new business in the optimal location.
+
+Even power consumption of a particular company can tell you lots about them, and can help you in your stock investment.
+
+## What we need to establish with this report.
+
+1.  *How does the state's power consumption relate to the GDP ?*
+2.  *How well does each state's power consumption predict their GDP ?*
+
+## Data Sources Used
+
+1.  Annual power usage by state of USA [<https://www.eia.gov/electricity/data/state/sales_annual.xlsx>]
+
+    We got this data from the Energy Information Administration website . It is an annual energy consumption data for the states in US for the year 1997 to 2018. Here the data was available as years in columns so we had to transpose that data .
+
+2.  GDP by state of USA [<https://github.com/vidit-sharma/Data_GDP_US/raw/main/GDP%20by%20state%20(1).xls>]
+
+    We got this data from the Bureau of Economic Analysis. It is the annual GDP data for the states of US for the year from 1990 to 2018. Here we only use the column that has the total energy consumption for our analysis.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+Libraries Used in this analysis:
+
+```{r message=FALSE}
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(patchwork)
+
+```
+
+## Loading and Cleansing the Datasets
+
+Lets load the electric power consumption data into R.
+
+```{r load_elec_data}
+
+url <- "https://www.eia.gov/electricity/data/state/sales_annual.xlsx"
+destfile <- "sales_annual.xlsx"
+curl::curl_download(url, destfile)
+elec_usage <- read_excel(destfile)
+```
+
+Looking at the dataset, we need to cleanse it and transform the data as per our requirement .
+
+```{r cleanse_elec_data}
+
+colnames(elec_usage) <- elec_usage[1,]
+elec_usage <- elec_usage[-1,]
+elec_usage <- elec_usage[,-c(4:8)]
+elec_usage <- elec_usage %>% group_by(Year) %>%
+  filter(`Industry Sector Category` == "Total Electric Industry")
+```
+
+We see that the data available to us for the state name is in the form of State Abbreviation. So we have to use the state abbreviation to get full State name.
+
+```{r state_abbrev}
+
+state_abbreviation <- read.csv("https://worldpopulationreview.com/static/states/abbr-name.csv", header = FALSE)
+colnames(state_abbreviation) <- c("State", "State_full")
+elec_usage <- merge(elec_usage, state_abbreviation, by = "State")
+elec_usage[,1] <- elec_usage[,5]
+elec_usage <- elec_usage[-5]
+table(is.na(elec_usage))
+```
+
+Now we need to load and cleanse the GDP data for the state of US so as to transform the data as per our requirement.
+
+```{r gdp_by_state}
+url1 <- 
+  "https://github.com/vidit-sharma/Data_GDP_US/raw/main/GDP%20by%20state%20(1).xls"
+destfile1 <- "GDP%20by%20state%20(1).xls"
+curl::curl_download(url1, destfile1)
+GDP_by_state <- read_excel(destfile1)
+colnames(GDP_by_state) <- GDP_by_state[5,]
+GDP_by_state <- GDP_by_state[-c(1:5),-1]
+GDP_by_state <- pivot_longer(GDP_by_state, -GeoName, names_to = "Year", values_to = "GDP")
+colnames(GDP_by_state) <- c("State", "Year", "GDP")
+```
+
+## Merging the Datasets
+
+Now as both the data are cleansed and ready, we will merge both the datasets on the key as State and Year so as to get the GDP data of the state and Electric consumption of the state in the same data frame.
+
+```{r merge}
+elec_usage[,"state-year"] <- data.frame(paste(elec_usage$State, elec_usage$Year, sep = "-"))
+GDP_by_state[,"state-year"] <- data.frame(paste(GDP_by_state$State, GDP_by_state$Year, sep = "-"))
+GDP_by_state <- GDP_by_state[,-c(1:2)]
+elec_GDP <- merge(elec_usage, GDP_by_state, by = "state-year")
+elec_GDP <- elec_GDP[,-c(2:4)]
+colnames(elec_GDP) <- c("State-Year", "Electric Usage", "GDP")
+table(is.na(elec_GDP))
+elec_GDP <- cbind((t(data.frame(elec_GDP$`State-Year` %>% str_split("-")))),
+                  elec_GDP)
+elec_GDP <- elec_GDP[,-3]      
+colnames(elec_GDP) <- c("State", "Year", "Electric Usage", "GDP")
+rownames(elec_GDP) <- NULL
+```
+
+Lets compare the GDP of the state with the GDP on the next year of the same state.
+
+```{r GDP_1}
+GDP <- elec_GDP[4]
+GDP[1151,] <- 9999999
+GDP <- GDP[-1,]
+elec_GDP_plus1 <- cbind(elec_GDP,GDP)
+colnames(elec_GDP_plus1) <- c("State", "Year", "Electric Usage", "GDP", "GDP+1year")
+elec_GDP_plus1 <- elec_GDP_plus1 %>% filter(Year != 2019) # state change correction
+
+elec_GDP_plus1[,"GDP"] <- round(as.numeric(elec_GDP_plus1$GDP))
+elec_GDP_plus1[,"GDP+1year"] <- round(as.numeric(elec_GDP_plus1$`GDP+1year`))
+```
+
+## Visualization
+
+Now as we will segregate the data based on the state.
+
+```{r segre}
+state_abbreviation <- state_abbreviation[,-1]
+
+for(i in state_abbreviation){
+  assign(paste0("elec_GDP_plus1_",i), elec_GDP_plus1 %>% filter(State == i))
+}
+```
+
+Lets take a look at the graphs for Energy consumption vs year and GDP vs Year so as to analyse the trend on change in both the graphs and to find a correlation between them. We also compare the data for GDP of the next year vs year. We will look for a couple of states so as to generalize the result.
+
+1.  For the state of Florida
+
+```{r florida}
+par(mfrow = c(3,1))
+plot(elec_GDP_plus1_Florida$Year, elec_GDP_plus1_Florida$`Electric Usage`, 
+     main = "Florida", xlab = "Year", ylab = "Electric Usage", 
+     type = "o", col = "red")
+plot(elec_GDP_plus1_Florida$Year, elec_GDP_plus1_Florida$`GDP`, 
+     xlab = "Year", ylab = "GDP", type = "o", col = "red")
+plot(elec_GDP_plus1_Florida$Year, elec_GDP_plus1_Florida$`GDP+1year`,
+     xlab = "Year", ylab = "GDP+1year", type = "o", col = "red")
+```
+
+2.  For the state of Virginia
+
+```{r virginia}
+par(mfrow = c(3,1))
+plot(elec_GDP_plus1_Virginia$Year, elec_GDP_plus1_Virginia$`Electric Usage`,
+     main = "Virginia", xlab = "Year", ylab = "Electric Usage", 
+     type = "o", col = "red")
+plot(elec_GDP_plus1_Virginia$Year, elec_GDP_plus1_Virginia$`GDP`,
+     xlab = "Year", ylab = "GDP", type = "o", col = "red")
+plot(elec_GDP_plus1_Virginia$Year, elec_GDP_plus1_Virginia$`GDP+1year`,
+     xlab = "Year", ylab = "GDP+1year", type = "o", col = "red")
+```
+
+3.  For the state of Texas
+
+```{r texas}
+par(mfrow = c(3,1))
+plot(elec_GDP_plus1_Texas$Year, elec_GDP_plus1_Texas$`Electric Usage`,
+     main = "Texas", xlab = "Year", ylab = "Electric Usage",
+     type = "o", col = "red")
+plot(elec_GDP_plus1_Texas$Year, elec_GDP_plus1_Texas$`GDP`,
+     xlab = "Year", ylab = "GDP", type = "o", col = "red")
+plot(elec_GDP_plus1_Texas$Year, elec_GDP_plus1_Texas$`GDP+1year`,
+     xlab = "Year", ylab = "GDP+1year", type = "o", col = "red")
+```
+
+4.  For the state of Georgia
+
+```{r georgia}
+par(mfrow = c(3,1))
+plot(elec_GDP_plus1_Georgia$Year, elec_GDP_plus1_Georgia$`Electric Usage`, 
+     main = "Georgia", xlab = "Year", ylab = "Electric Usage",
+     type = "o", col = "red")
+plot(elec_GDP_plus1_Georgia$Year, elec_GDP_plus1_Georgia$`GDP`,
+     xlab = "Year", ylab = "GDP", type = "o", col = "red")
+plot(elec_GDP_plus1_Georgia$Year, elec_GDP_plus1_Georgia$`GDP+1year`,
+     xlab = "Year", ylab = "GDP+1year", type = "o", col = "red")
+```
+
+From the above plots, we found that electricity consumption and GDP have a positive correlation. And whenever there is a dip in electrical consumption , there is a dip in GDP too. Thus this establishes the answer to the first question of our report.
+
+## Models
+
+Now let us use the above data to predict GDP for further years based on Electric consumption. For this we will need two models. First will help us predict values of electric consumption for the years 2019 to 2023.And the second will use the predicted data of electric usage to predict GDP data for the year 2019 to 2023.
+
+```{r rearrange}
+Colorado_rearrage <- elec_GDP_plus1_Colorado[, c(1, 4, 5, 3, 2)]
+Colorado_rearrage<-transform(Colorado_rearrage, `Electric Usage` = as.numeric(`Electric Usage`),Year=as.numeric(Year))
+
+```
+
+Model 1: Electric Usage based on previous years electric data
+
+```{r mod_1}
+mod1<- lm(Electric.Usage ~ Year,data=Colorado_rearrage)
+summary(mod1)
+```
+
+Model 2: GDP based on the Electric consumption data
+
+```{r mod_2}
+mod <- lm( GDP ~ Electric.Usage , data = Colorado_rearrage)
+summary(mod)
+```
+
+Lets calculate the prediction data for GDP based on the predicted data of electric consumption.
+
+```{r pred}
+Colorado_rearrage<-Colorado_rearrage %>% mutate(pred = predict(mod))
+
+Colorado_add<- data.frame(State = c("Colorado","Colorado", "Colorado","Colorado", "Colorado"), 
+                          GDP = c(0,0,0,0,0),
+                          GDP.1year=c(0,0,0,0,0),
+                          Electric.Usage=c(predict(mod1, data.frame(Year = 2019)),
+                                           predict(mod1, data.frame(Year = 2020)),
+                                           predict(mod1, data.frame(Year = 2021)),
+                                           predict(mod1, data.frame(Year = 2022)),
+                                           predict(mod1, data.frame(Year = 2023))),
+                          Year=c(2019,2020,2021,2022,2023),
+                          pred=c(predict(mod, data.frame(Electric.Usage =
+                                                           predict(mod1, data.frame(Year = 2019)))),
+                                 predict(mod, data.frame(Electric.Usage = 
+                                                           predict(mod1, data.frame(Year = 2020)))),
+                                 predict(mod, data.frame(Electric.Usage =
+                                                           predict(mod1, data.frame(Year = 2021)))),
+                                 predict(mod, data.frame(Electric.Usage =
+                                                           predict(mod1, data.frame(Year = 2022)))),
+                                 predict(mod, data.frame(Electric.Usage = 
+                                                           predict(mod1, data.frame(Year = 2023))))))
+
+Colorado_rearrage <- rbind(Colorado_rearrage,Colorado_add )
+```
+
+### Model Visualizations for the state of Colorado
+
+```{r model_1_vis}
+ggplot() +
+  geom_point(data=Colorado_rearrage[Colorado_rearrage$Year<=2018,],
+             aes(x = Year, y = Electric.Usage), color = "blue") +
+  geom_point(data=Colorado_rearrage[Colorado_rearrage$Year>2018,],
+             aes(x = Year, y = Electric.Usage), color = "red")
+
+```
+
+The above graph shows energy usage prediction based on previous year data for energy usage for the state of Colorado. Here Blue points represents the value from our data and Red points represent the prediction data.
+
+```{r model_2_vis}
+ggplot() +
+  geom_point(data=Colorado_rearrage[Colorado_rearrage$Year<=2018,],
+             aes(x = Year, y = GDP), color = "blue") +
+  geom_point(data=Colorado_rearrage,aes(x = Year, y = pred), color = "red")
+```
+
+The above graph shows GDP data prediction based on energy usage data predicted previously on year for the state of Colorado. Here Blue points represents the actual GDP data from our data and Red points represent the GDP predictions based on the electric usage data.
+
+## Github Link
+
+We have uploaded our report in rmd and knitted format at the provided link :[<https://github.com/vidit-sharma/Predict-GDP-based-on-Electric-Consumption.git>]
+
+## Conclusion
+
+As a result of data analysis, it was found that electricity consumption and GDP had a positive correlation.
+
+Daily and monthly correlation analysis between electricity consumption and GDP can be used as a leading indicator of economic trends.
+
+## Possible sources of Bias
+
+One of the possible sources of bias is the source data, regarding how it was collected and reported.
+
+There is a possibility of selection bias, as the power consumption records could be of only the major cities and not the countryside.
